@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campus Lost & Found Platform | Smart Matching & Secure Handover</title>
+  <meta name="description" content="Official University Campus Lost and Found Prototype. Algorithmic similarity matching, anti-fraud hidden reporting, admin verification queue, and in-app return coordination." />
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+
+  <!-- Quick Demo Role Switcher Bar -->
+  <aside class="demo-bar" aria-label="Demo Testing Controls">
+    <div class="container demo-bar-content">
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span style="font-weight: 700; color: var(--primary);">⚡ 1-Click Demo Personas:</span>
+        <div class="demo-pills">
+          <button class="demo-pill" onclick="App.quickLogin('admin@campus.edu', 'Admin@123')">🔑 Admin (Reviewer)</button>
+          <button class="demo-pill" onclick="App.quickLogin('alex.chen@campus.edu', 'Student@123')">🎓 Alex (Lost MacBook)</button>
+          <button class="demo-pill" onclick="App.quickLogin('priya.patel@campus.edu', 'Student@123')">🔍 Priya (Found MacBook)</button>
+          <button class="demo-pill" onclick="App.quickLogin('marcus.johnson@campus.edu', 'Student@123')">🏀 Marcus (Lost Flask)</button>
+        </div>
+      </div>
+      <div style="color: var(--text-muted); font-size: 0.75rem;">
+        Prototype for 10–15 Users • Multi-factor Scoring ($\ge 80\%$)
+      </div>
+    </div>
+  </aside>
+
+  <!-- Top Sticky Navigation -->
+  <header class="navbar">
+    <div class="container nav-content">
+      <div class="nav-brand" onclick="App.navigateTo('feed')">
+        <div class="brand-icon">🧭</div>
+        <span class="brand-title">CampusFinder</span>
+      </div>
+
+      <nav class="nav-menu" aria-label="Primary Navigation">
+        <div class="nav-link active" data-view="feed" onclick="App.navigateTo('feed')">
+          <span>🔍</span> Browse Lost Feed
+        </div>
+        <div class="nav-link" data-view="report-lost" onclick="App.navigateTo('report-lost')">
+          <span>📢</span> Report Lost
+        </div>
+        <div class="nav-link" data-view="report-found" onclick="App.navigateTo('report-found')">
+          <span>🛡️</span> Report Found
+        </div>
+        <div class="nav-link" data-view="my-posts" onclick="App.navigateTo('my-posts')">
+          <span>📋</span> My Reports
+        </div>
+        <div class="nav-link" id="nav-admin-link" data-view="admin-queue" onclick="App.navigateTo('admin-queue')" style="display: none;">
+          <span>⚖️</span> Review Queue
+          <span class="nav-badge pulse" id="admin-badge-count" style="display: none;">0</span>
+        </div>
+        <div class="nav-link" data-view="chat" onclick="App.navigateTo('chat')">
+          <span>💬</span> Messages
+        </div>
+      </nav>
+
+      <div class="nav-actions">
+        <button class="theme-btn" id="theme-toggle-btn" title="Toggle Dark/Light Mode" aria-label="Toggle theme">☀️</button>
+        <div id="nav-user-area">
+          <!-- Populated dynamically via App.renderNavUser() -->
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <header class="hero">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="hero-badge">🎓 Official University Campus Services</div>
+      <h1 class="hero-title">Recover What's Lost. <span>Return What's Found.</span></h1>
+      <p class="hero-subtitle">
+        Automated confidence matching ($\ge 80\%$), confidential reporting to prevent fraudulent claims, administrator verification, and direct in-app recovery chat.
+      </p>
+
+      <div class="hero-stats">
+        <div class="stat-box">
+          <div class="stat-num" id="stat-lost-count">3</div>
+          <div class="stat-label">Active Lost Reports</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num" id="stat-found-count">3</div>
+          <div class="stat-label">Protected Found Reports</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num" id="stat-resolved-count">0</div>
+          <div class="stat-label">Verified Recoveries</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main View Container -->
+  <main class="container">
+
+    <!-- VIEW 1: PUBLIC LOST ITEMS FEED -->
+    <section class="view-section active" id="view-feed" aria-labelledby="feed-heading">
+      <h2 id="feed-heading" style="display: none;">Public Lost Items Feed</h2>
+      <div class="toolbar">
+        <div class="search-row">
+          <div class="search-input-wrapper">
+            <span class="search-icon">🔎</span>
+            <input type="text" id="feed-search-input" class="search-input" placeholder="Search by item name, description, location (e.g. MacBook, Library, Wallet)..." />
+          </div>
+          <select id="feed-location-filter" class="select-input" aria-label="Filter by Campus Location">
+            <option value="">All Locations</option>
+            <option value="Library">Central Library</option>
+            <option value="Gym">Recreation Center / Gym</option>
+            <option value="Dining">Dining Commons</option>
+            <option value="Quad">Campus Quad / Lawn</option>
+            <option value="Science">Science & Engineering Hall</option>
+          </select>
+          <button class="btn btn-primary" onclick="App.navigateTo('report-lost')">
+            + Report Lost Item
+          </button>
+        </div>
+
+        <div class="category-pills">
+          <button class="cat-pill active" data-category="">All Categories</button>
+          <button class="cat-pill" data-category="Electronics">Electronics</button>
+          <button class="cat-pill" data-category="ID Cards">ID Cards & Wallets</button>
+          <button class="cat-pill" data-category="Books">Books & Notes</button>
+          <button class="cat-pill" data-category="Accessories">Accessories</button>
+          <button class="cat-pill" data-category="Keys">Keys</button>
+          <button class="cat-pill" data-category="Other">Other</button>
+        </div>
+      </div>
+
+      <div class="items-grid" id="feed-items-grid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- VIEW 2: REPORT LOST ITEM -->
+    <section class="view-section" id="view-report-lost" aria-labelledby="report-lost-heading">
+      <div class="form-card">
+        <div class="form-header">
+          <div style="font-size: 2.2rem; margin-bottom: 0.5rem;">📢</div>
+          <h2 id="report-lost-heading" class="form-title">Report a Lost Item</h2>
+          <p class="form-desc">
+            Your report will be published to the campus lost catalog and continuously evaluated by our matching engine against incoming found items.
+          </p>
+        </div>
+
+        <form id="report-lost-form">
+          <div class="form-group">
+            <label class="form-label" for="lost-title">Item Title / Name *</label>
+            <input type="text" id="lost-title" name="title" class="form-input" placeholder="e.g. Space Gray MacBook Pro 14-inch" required />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="lost-category">Category *</label>
+              <select id="lost-category" name="category" class="form-select" required>
+                <option value="Electronics">Electronics</option>
+                <option value="ID Cards">ID Cards & Wallets</option>
+                <option value="Books">Books & Course Material</option>
+                <option value="Accessories">Accessories & Bottles</option>
+                <option value="Keys">Keys</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="lost-date">Date Lost *</label>
+              <input type="date" id="lost-date" name="item_date" class="form-input" required />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="lost-location">Last Seen Location *</label>
+            <input type="text" id="lost-location" name="location" class="form-input" placeholder="e.g. Central Library 2nd Floor Study Desks" required />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="lost-desc">Description & Distinguishing Details *</label>
+            <textarea id="lost-desc" name="description" class="form-textarea" placeholder="Include stickers, scratches, case color, model numbers, or unique marks that verify your ownership..." required></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Photo Attachment (Optional)</label>
+            <label class="file-dropzone" for="lost-image-input">
+              <div style="font-size: 1.5rem; margin-bottom: 0.25rem;">📷</div>
+              <div style="font-weight: 600;">Click to upload a photo of the item</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">PNG, JPG, WEBP up to 5MB</div>
+              <input type="file" id="lost-image-input" name="image" accept="image/*" style="display: none;" />
+            </label>
+            <div class="preview-box" id="lost-img-preview-box">
+              <img id="lost-img-thumb" class="preview-thumb" alt="Preview" />
+              <span style="font-size: 0.85rem; color: var(--text-secondary);">Image selected and ready for upload</span>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+            <button type="button" class="btn btn-secondary" onclick="App.navigateTo('feed')">Cancel</button>
+            <button type="submit" class="btn btn-primary" style="flex: 1;">Submit Lost Report & Run Matcher</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- VIEW 3: REPORT FOUND ITEM (CONFIDENTIAL ANTI-FRAUD) -->
+    <section class="view-section" id="view-report-found" aria-labelledby="report-found-heading">
+      <div class="form-card">
+        <div class="form-header">
+          <div style="font-size: 2.2rem; margin-bottom: 0.5rem;">🛡️</div>
+          <h2 id="report-found-heading" class="form-title">Report a Found Item</h2>
+          <p class="form-desc">
+            Help return an item to its rightful owner safely and securely.
+          </p>
+        </div>
+
+        <!-- Security Notice -->
+        <div class="notice-banner notice-shield">
+          <span class="icon">🔒</span>
+          <div>
+            <strong>Campus Anti-Fraud Protection:</strong>
+            To prevent fraudulent or opportunistic claims by unauthorized individuals, found items are kept confidential. They are not shown on the public catalog and will only be cross-referenced against legitimate lost reports for admin verification.
+          </div>
+        </div>
+
+        <form id="report-found-form">
+          <div class="form-group">
+            <label class="form-label" for="found-title">Item Title / Name *</label>
+            <input type="text" id="found-title" name="title" class="form-input" placeholder="e.g. Blue Hydro Flask Water Bottle" required />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="found-category">Category *</label>
+              <select id="found-category" name="category" class="form-select" required>
+                <option value="Electronics">Electronics</option>
+                <option value="ID Cards">ID Cards & Wallets</option>
+                <option value="Books">Books & Course Material</option>
+                <option value="Accessories">Accessories & Bottles</option>
+                <option value="Keys">Keys</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="found-date">Date Found *</label>
+              <input type="date" id="found-date" name="item_date" class="form-input" required />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="found-location">Found Location *</label>
+            <input type="text" id="found-location" name="location" class="form-input" placeholder="e.g. Recreation Center Gym Bleachers" required />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="found-desc">Description of Item Found *</label>
+            <textarea id="found-desc" name="description" class="form-textarea" placeholder="Describe the item's condition, appearance, or where you handed it in..." required></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Photo Attachment (Optional)</label>
+            <label class="file-dropzone" for="found-image-input">
+              <div style="font-size: 1.5rem; margin-bottom: 0.25rem;">📷</div>
+              <div style="font-weight: 600;">Click to upload a photo of the item</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">PNG, JPG, WEBP up to 5MB</div>
+              <input type="file" id="found-image-input" name="image" accept="image/*" style="display: none;" />
+            </label>
+            <div class="preview-box" id="found-img-preview-box">
+              <img id="found-img-thumb" class="preview-thumb" alt="Preview" />
+              <span style="font-size: 0.85rem; color: var(--text-secondary);">Image selected and ready for upload</span>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+            <button type="button" class="btn btn-secondary" onclick="App.navigateTo('feed')">Cancel</button>
+            <button type="submit" class="btn btn-success" style="flex: 1;">Submit Found Item (Securely Logged)</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- VIEW 4: MY POSTS DASHBOARD -->
+    <section class="view-section" id="view-my-posts" aria-labelledby="my-posts-heading">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.75rem; flex-wrap: wrap; gap: 1rem;">
+        <div>
+          <h2 id="my-posts-heading" style="font-size: 1.85rem;">My Reports Dashboard</h2>
+          <p style="color: var(--text-secondary); font-size: 0.95rem;">Track lifecycle status, admin match verifications, and return coordination.</p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+          <button class="btn btn-primary btn-sm" onclick="App.navigateTo('report-lost')">+ Report Lost</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('report-found')">+ Report Found</button>
+        </div>
+      </div>
+
+      <div id="my-posts-list">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- VIEW 5: ADMIN MATCH REVIEW QUEUE -->
+    <section class="view-section" id="view-admin-queue" aria-labelledby="admin-queue-heading">
+      <div class="admin-header">
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span style="background: rgba(239, 68, 68, 0.2); color: #f87171; padding: 0.2rem 0.5rem; border-radius: var(--radius-sm); font-size: 0.75rem; font-weight: 700;">ADMINISTRATOR PORTAL</span>
+          </div>
+          <h2 id="admin-queue-heading" style="font-size: 1.85rem; margin-top: 0.25rem;">Automated Match Review Queue</h2>
+          <p style="color: var(--text-secondary); font-size: 0.95rem;">
+            Review algorithmic match candidates side-by-side ($\ge 80\%$ confidence). Approving a match updates both items to <span style="color: #fbbf24; font-weight: 600;">MATCHED</span> and unlocks direct communication.
+          </p>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <label for="admin-filter-status" style="font-size: 0.85rem; color: var(--text-secondary);">Status Filter:</label>
+          <select id="admin-filter-status" class="select-input">
+            <option value="PENDING">Pending Review (Action Required)</option>
+            <option value="APPROVED">Approved Matches</option>
+            <option value="REJECTED">Rejected Matches</option>
+            <option value="ALL">All Match Suggestions</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="matches-list" id="admin-matches-list">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- VIEW 6: IN-APP CHAT & HANDOVER RESOLUTION -->
+    <section class="view-section" id="view-chat" aria-labelledby="chat-heading">
+      <div style="margin-bottom: 1.5rem;">
+        <h2 id="chat-heading" style="font-size: 1.85rem;">In-App Handover Coordination</h2>
+        <p style="color: var(--text-secondary); font-size: 0.95rem;">
+          Private communication rooms unlocked between item owners and finders upon administrator match approval.
+        </p>
+      </div>
+
+      <div class="chat-container">
+        <!-- Sidebar: Active Rooms -->
+        <div class="chat-sidebar">
+          <div class="chat-sidebar-header">
+            <span>Conversations</span>
+          </div>
+          <div class="chat-rooms-list" id="chat-rooms-list">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Main Chat Thread -->
+        <div class="chat-main">
+          <div class="chat-main-header">
+            <div>
+              <div id="chat-room-title" style="font-weight: 700; font-size: 1.05rem;">Select a Conversation</div>
+              <div id="chat-room-sub" style="font-size: 0.8rem; color: var(--text-secondary);">Choose a room from the left to view coordination history.</div>
+            </div>
+            <div>
+              <button id="chat-resolve-btn" class="btn btn-success btn-sm" style="display: none;">Mark Handover Complete</button>
+            </div>
+          </div>
+
+          <div class="messages-stream" id="chat-messages-stream">
+            <!-- Rendered dynamically -->
+          </div>
+
+          <form id="chat-form" class="chat-input-bar">
+            <input type="text" id="chat-input-text" class="chat-input" placeholder="Type a message to coordinate return location, time, or security desk drop-off..." autocomplete="off" />
+            <button type="submit" class="btn btn-primary">Send</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL: ITEM DETAILS -->
+  <div class="modal-overlay" id="item-detail-modal" role="dialog" aria-modal="true" aria-labelledby="item-modal-title">
+    <div class="modal-dialog">
+      <button class="modal-close" onclick="App.closeModal('item-detail-modal')">✕</button>
+      <div id="item-modal-content">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: AUTHENTICATION (LOGIN & REGISTER) -->
+  <div class="modal-overlay" id="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div class="modal-dialog">
+      <button class="modal-close" onclick="App.closeModal('auth-modal')">✕</button>
+
+      <div style="text-align: center; margin-bottom: 1.5rem;">
+        <div style="font-size: 2rem; margin-bottom: 0.25rem;">🧭</div>
+        <h2 id="auth-modal-title" style="font-size: 1.5rem;">Campus Account Access</h2>
+        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.25rem;">
+          Restricted to authorized college email addresses (@*.edu or .ac.*)
+        </p>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
+        <button id="tab-btn-login" class="btn btn-primary" style="flex: 1;" onclick="App.switchAuthTab('login')">Sign In</button>
+        <button id="tab-btn-register" class="btn btn-secondary" style="flex: 1;" onclick="App.switchAuthTab('register')">Register</button>
+      </div>
+
+      <!-- Sign In Form -->
+      <form id="auth-login-form">
+        <div class="form-group">
+          <label class="form-label" for="login-email">College Email (@*.edu)</label>
+          <input type="email" id="login-email" name="email" class="form-input" placeholder="e.g. alex.chen@campus.edu" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="login-password">Password</label>
+          <input type="password" id="login-password" name="password" class="form-input" placeholder="••••••••" required />
+        </div>
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.75rem;">Sign In to CampusFinder</button>
+      </form>
+
+      <!-- Register Form -->
+      <form id="auth-register-form" style="display: none;">
+        <div class="form-group">
+          <label class="form-label" for="reg-name">Full Name</label>
+          <input type="text" id="reg-name" name="full_name" class="form-input" placeholder="e.g. Alex Chen" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-email">College Email Pattern (@*.edu)</label>
+          <input type="email" id="reg-email" name="email" class="form-input" placeholder="e.g. your_name@campus.edu" required />
+          <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+            Must end with a university domain (.edu, .ac.in, .ac.uk, etc.)
+          </span>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-phone">Phone Number (Optional)</label>
+          <input type="tel" id="reg-phone" name="phone" class="form-input" placeholder="e.g. (555) 123-4567" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-password">Password (min 6 characters)</label>
+          <input type="password" id="reg-password" name="password" class="form-input" placeholder="••••••••" required minlength="6" />
+        </div>
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.75rem;">Create College Account</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+  <!-- JavaScript Scripts -->
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
