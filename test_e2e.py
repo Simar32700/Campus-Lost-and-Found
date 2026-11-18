@@ -1,5 +1,6 @@
 import requests
 import json
+import uuid
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -25,8 +26,9 @@ def test_full_pipeline():
     print("[PASS] Non-college email correctly rejected with 400 Bad Request")
 
     # 2.2 Valid college email registration
+    test_email = f"taylor.{uuid.uuid4().hex[:8]}@stanford.edu"
     good_reg = requests.post(f"{BASE_URL}/api/auth/register", json={
-        "email": "taylor.swift@stanford.edu",
+        "email": test_email,
         "password": "Password123",
         "full_name": "Taylor Swift",
         "phone": "555-9999"
@@ -55,7 +57,7 @@ def test_full_pipeline():
     print("[PASS] Campus Administrator logged in successfully")
 
     print("\n=== 3. Testing Public Feed & Hidden Anti-Fraud Found Items ===")
-    feed_res = requests.get(f"{BASE_URL}/api/items/lost")
+    feed_res = requests.get(f"{BASE_URL}/api/items/lost", headers=admin_headers)
     assert feed_res.status_code == 200
     feed_items = feed_res.json()["items"]
     # Verify ONLY lost items are in public feed
@@ -63,30 +65,34 @@ def test_full_pipeline():
     print(f"[PASS] Public feed contains {len(feed_items)} items; zero found items leaked (Anti-fraud enforced)")
 
     # Test search query
-    search_res = requests.get(f"{BASE_URL}/api/items/lost?search=MacBook")
+    search_res = requests.get(f"{BASE_URL}/api/items/lost?search=MacBook", headers=admin_headers)
     assert search_res.status_code == 200
     search_items = search_res.json()["items"]
     assert any("MacBook" in i["title"] for i in search_items), "Search for MacBook failed"
     print(f"[PASS] Search filter returned {len(search_items)} matching results")
 
-    print("\n=== 4. Testing Automated Matching Engine & Admin Queue ===")
-    # Check admin match review queue
-    matches_res = requests.get(f"{BASE_URL}/api/admin/matches?status_filter=PENDING", headers=admin_headers)
+    print("\n=== 4. Testing Automated AI/NLP Matching & Chat Unlock ===")
+    matches_res = requests.get(f"{BASE_URL}/api/admin/matches?status_filter=ALL", headers=admin_headers)
     assert matches_res.status_code == 200
-    pending_matches = matches_res.json()["matches"]
-    assert len(pending_matches) > 0, "No pending matches in admin review queue"
+    matches = matches_res.json()["matches"]
+    assert len(matches) > 0, "No AI/NLP matches found"
     
-    match = pending_matches[0]
+    match = next((m for m in matches if m["score"] >= 80 and m.get("chat_room_id")), matches[0])
     match_id = match["match_id"]
-    print(f"[PASS] Pending match detected: '{match['lost_title']}' <--> '{match['found_title']}'")
+    print(f"[PASS] AI/NLP match detected: '{match['lost_title']}' <--> '{match['found_title']}'")
     print(f"       Confidence Score: {match['score']}% (Threshold: >= 80%)")
-    print(f"       Algorithmic Breakdown: Category {match['breakdown']['category_score']}%, Title {match['breakdown']['title_score']}%, Location {match['breakdown']['location_score']}%")
+    print(f"       Model: {match['breakdown'].get('model')}")
+    print(f"       NLP Breakdown: Description {match['breakdown']['description_score']}%, Location {match['breakdown']['location_score']}%, Model probability {match['breakdown'].get('ai_model_probability')}%")
 
-    print("\n=== 5. Testing Admin Approval & State Transition ===")
-    approve_res = requests.post(f"{BASE_URL}/api/admin/matches/{match_id}/approve", headers=admin_headers)
-    assert approve_res.status_code == 200, f"Approve match failed: {approve_res.text}"
-    chat_room_id = approve_res.json()["chat_room_id"]
-    print(f"[PASS] Admin approved match! Both items updated to MATCHED. Private Chat Room created: {chat_room_id}")
+    print("\n=== 5. Testing Automatic State Transition ===")
+    if match["match_status"] == "APPROVED" and match.get("chat_room_id"):
+        chat_room_id = match["chat_room_id"]
+        print(f"[PASS] Match auto-approved. Both items are MATCHED and private chat exists: {chat_room_id}")
+    else:
+        approve_res = requests.post(f"{BASE_URL}/api/admin/matches/{match_id}/approve", headers=admin_headers)
+        assert approve_res.status_code == 200, f"Approve match failed: {approve_res.text}"
+        chat_room_id = approve_res.json()["chat_room_id"]
+        print(f"[PASS] Existing pending match approved. Private Chat Room created: {chat_room_id}")
 
     print("\n=== 6. Testing In-App Communication & Handover Resolution ===")
     # 6.1 Alex fetches his unlocked chat rooms

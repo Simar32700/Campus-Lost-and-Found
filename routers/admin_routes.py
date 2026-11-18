@@ -205,7 +205,19 @@ def get_stats(admin_user: dict = Depends(require_admin)):
         cursor.execute("SELECT COUNT(*) as cnt FROM items WHERE status = 'CLOSED'")
         resolved_items = cursor.fetchone()["cnt"]
 
+        cursor.execute("SELECT COUNT(*) as cnt FROM items WHERE status = 'MATCHED'")
+        matched_items = cursor.fetchone()["cnt"]
+
+        cursor.execute("SELECT COUNT(*) as cnt FROM matches WHERE status = 'REJECTED'")
+        rejected_matches = cursor.fetchone()["cnt"]
+        cursor.execute("SELECT COUNT(*) as cnt FROM matches")
+        total_matches = cursor.fetchone()["cnt"]
+
         return {
+            "rejected_matches": rejected_matches,
+            "total_matches": total_matches,
+            "total_items": total_lost + total_found,
+            "matched_items": matched_items,
             "total_lost": total_lost,
             "total_found": total_found,
             "pending_matches": pending_matches,

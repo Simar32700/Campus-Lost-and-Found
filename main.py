@@ -8,14 +8,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import BASE_DIR, UPLOAD_DIR
 from database import init_db
 from seed_data import seed_initial_data
+from matching import open_existing_high_confidence_matches
 from routers.auth_routes import router as auth_router
 from routers.item_routes import router as item_router
 from routers.admin_routes import router as admin_router
 from routers.chat_routes import router as chat_router
+from routers.complaint_routes import router as complaint_router
 
 # Initialize database schema & seed initial data
 init_db()
 seed_initial_data()
+open_existing_high_confidence_matches()
 
 app = FastAPI(
     title="Campus Lost & Found Platform",
@@ -37,6 +40,7 @@ app.include_router(auth_router)
 app.include_router(item_router)
 app.include_router(admin_router)
 app.include_router(chat_router)
+app.include_router(complaint_router)
 
 # Mount Uploads directory for photo attachments
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

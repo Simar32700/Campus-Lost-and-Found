@@ -81,12 +81,33 @@ def init_db():
                 match_id TEXT UNIQUE NOT NULL,
                 lost_reporter_id TEXT NOT NULL,
                 found_reporter_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'OPEN',
+                dismissed_by TEXT,
+                dismissed_at TEXT,
+                resolve_lost_confirmed INTEGER NOT NULL DEFAULT 0,
+                resolve_found_confirmed INTEGER NOT NULL DEFAULT 0,
+                resolved_at TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,
                 FOREIGN KEY(lost_reporter_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY(found_reporter_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
+
+        cursor.execute("PRAGMA table_info(chat_rooms)")
+        chat_columns = {row["name"] for row in cursor.fetchall()}
+        if "status" not in chat_columns:
+            cursor.execute("ALTER TABLE chat_rooms ADD COLUMN status TEXT NOT NULL DEFAULT 'OPEN'")
+        if "dismissed_by" not in chat_columns:
+            cursor.execute("ALTER TABLE chat_rooms ADD COLUMN dismissed_by TEXT")
+        if "dismissed_at" not in chat_columns:
+            cursor.execute("ALTER TABLE chat_rooms ADD COLUMN dismissed_at TEXT")
+        if "resolve_lost_confirmed" not in chat_columns:
+            cursor.execute("ALTER TABLE chat_rooms ADD COLUMN resolve_lost_confirmed INTEGER NOT NULL DEFAULT 0")
+        if "resolve_found_confirmed" not in chat_columns:
+            cursor.execute("ALTER TABLE chat_rooms ADD COLUMN resolve_found_confirmed INTEGER NOT NULL DEFAULT 0")
+        if "resolved_at" not in chat_columns:
+            cursor.execute("ALTER TABLE chat_rooms ADD COLUMN resolved_at TEXT")
 
         # 5. Messages Table
         cursor.execute("""
@@ -95,10 +116,51 @@ def init_db():
                 chat_room_id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
                 content TEXT NOT NULL,
+                attachment_url TEXT,
+                attachment_type TEXT,
+                attachment_name TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(chat_room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE,
                 FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE
             )
+        """)
+
+        cursor.execute("PRAGMA table_info(messages)")
+        message_columns = {row["name"] for row in cursor.fetchall()}
+        if "attachment_url" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN attachment_url TEXT")
+        if "attachment_type" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN attachment_type TEXT")
+        if "attachment_name" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN attachment_name TEXT")
+
+        # Complaints survive reopening and retain their review history.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS complaints (
+                id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+                reporter_id TEXT NOT NULL REFERENCES users(id),
+                reported_user_id TEXT REFERENCES users(id),
+                source TEXT NOT NULL DEFAULT 'AUTOMATIC',
+                category TEXT NOT NULL DEFAULT 'CHAT_DISMISSED',
+                details TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                admin_notes TEXT NOT NULL DEFAULT '',
+                reviewed_by TEXT REFERENCES users(id),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(room_id, reporter_id)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status)")
+        # Include chats dismissed before the complaint feature was installed.
+        cursor.execute("""
+            INSERT OR IGNORE INTO complaints
+                (id, room_id, reporter_id, reported_user_id, created_at, updated_at)
+            SELECT lower(hex(randomblob(16))), id, dismissed_by,
+                CASE WHEN dismissed_by = lost_reporter_id THEN found_reporter_id ELSE lost_reporter_id END,
+                COALESCE(dismissed_at, created_at), COALESCE(dismissed_at, created_at)
+            FROM chat_rooms WHERE status = 'DISMISSED' AND dismissed_by IS NOT NULL
         """)
 
         # Indexes for fast lookup

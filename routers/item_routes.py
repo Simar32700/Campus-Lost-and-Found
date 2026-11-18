@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form, Query
 from config import UPLOAD_DIR
 from database import get_db
-from auth import get_current_user, get_optional_current_user
+from auth import get_current_user, require_admin
 from matching import evaluate_item_matches
 
 router = APIRouter(prefix="/api/items", tags=["Items"])
@@ -42,10 +42,10 @@ def list_lost_items(
     category: Optional[str] = Query(None, description="Filter by item category"),
     location: Optional[str] = Query(None, description="Filter by location keyword"),
     status_filter: Optional[str] = Query("OPEN", description="Filter by status ('OPEN', 'MATCHED', 'CLOSED', 'ALL')"),
-    current_user: Optional[dict] = Depends(get_optional_current_user)
+    current_user: dict = Depends(require_admin)
 ):
     """
-    Public Lost Items Catalog. Only items with type 'LOST' are returned.
+    Admin-only Lost Items Catalog. Only items with type 'LOST' are returned.
     Supports real-time search and multi-criteria filtering.
     """
     with get_db() as conn:
@@ -199,6 +199,32 @@ def get_my_posts(current_user: dict = Depends(get_current_user)):
         )
         rows = [dict(row) for row in cursor.fetchall()]
         return {"items": rows, "count": len(rows)}
+
+@router.get("/my-stats")
+def get_my_stats(current_user: dict = Depends(get_current_user)):
+    """
+    Returns profile-specific report metrics for the logged-in user.
+    OPEN and MATCHED reports are counted as active. CLOSED reports are verified recoveries.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                SUM(CASE WHEN type = 'LOST' AND status IN ('OPEN', 'MATCHED') THEN 1 ELSE 0 END) as active_lost,
+                SUM(CASE WHEN type = 'FOUND' AND status IN ('OPEN', 'MATCHED') THEN 1 ELSE 0 END) as active_found,
+                SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) as verified_recoveries
+            FROM items
+            WHERE reporter_id = ?
+            """,
+            (current_user["id"],)
+        )
+        stats = dict(cursor.fetchone())
+        return {
+            "active_lost": stats["active_lost"] or 0,
+            "active_found": stats["active_found"] or 0,
+            "verified_recoveries": stats["verified_recoveries"] or 0
+        }
 
 @router.get("/{item_id}")
 def get_item_details(item_id: str, current_user: dict = Depends(get_current_user)):

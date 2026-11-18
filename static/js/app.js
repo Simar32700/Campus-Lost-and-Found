@@ -10,12 +10,21 @@ const App = {
   chatPollInterval: null,
   adminPollInterval: null,
 
-  init() {
+  getItemImage(item) {
+    const generic = 'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?auto=format&fit=crop&w=600&q=80';
+    if (item.image_url && !item.image_url.includes('photo-1584438784894-089d6a62b8fa')) return item.image_url;
+    const details = `${item.title || ''} ${item.description || ''}`;
+    if (/\b(laptop|macbook|notebook|chromebook)\b/i.test(details)) return '/static/images/laptop.jpg';
+    if (/\b(mobile|phone|smartphone|iphone|android|samsung|pixel|oneplus|s\d{2}\s*ultra|galaxy)\b/i.test(details)) return '/static/images/mobile.jpg';
+    return generic;
+  },
+
+  async init() {
     this.initTheme();
     this.bindEvents();
-    this.restoreSession();
+    await this.restoreSession();
     this.loadStats();
-    this.navigateTo('feed');
+    this.navigateTo(this.getDefaultView());
   },
 
   // --------------------------------------------------------------------------
@@ -58,9 +67,15 @@ const App = {
     this.renderNavUser();
   },
 
+  getDefaultView() {
+    return this.currentUser && this.currentUser.role === 'ADMIN' ? 'admin-queue' : 'report-lost';
+  },
+
   renderNavUser() {
+    document.body.dataset.role = this.currentUser?.role || 'GUEST';
     const container = document.getElementById('nav-user-area');
     const adminLink = document.getElementById('nav-admin-link');
+    const feedLink = document.getElementById('nav-feed-link');
 
     if (!container) return;
 
@@ -87,6 +102,9 @@ const App = {
       if (adminLink) {
         adminLink.style.display = isAdm ? 'flex' : 'none';
       }
+      if (feedLink) {
+        feedLink.style.display = isAdm ? 'flex' : 'none';
+      }
     } else {
       container.innerHTML = `
         <button class="btn btn-secondary btn-sm" onclick="App.openAuthModal('login')">Sign In</button>
@@ -94,6 +112,9 @@ const App = {
       `;
       if (adminLink) {
         adminLink.style.display = 'none';
+      }
+      if (feedLink) {
+        feedLink.style.display = 'none';
       }
     }
   },
@@ -122,24 +143,36 @@ const App = {
     api.clearAuth();
     this.currentUser = null;
     this.renderNavUser();
+    this.loadStats();
     this.showToast('You have been signed out.', 'info');
-    this.navigateTo('feed');
+    this.navigateTo(this.getDefaultView());
   },
 
   // --------------------------------------------------------------------------
   // Navigation & View Switching
   // --------------------------------------------------------------------------
-  navigateTo(viewId) {
+  navigateTo(viewId, roomId = null) {
     this.currentView = viewId;
 
     // Check permissions
+    if (this.currentUser?.role === 'ADMIN' && ['report-lost', 'report-found'].includes(viewId)) {
+      viewId = 'admin-queue';
+      this.currentView = viewId;
+    }
+
+    if (viewId === 'feed' && (!this.currentUser || this.currentUser.role !== 'ADMIN')) {
+      this.showToast('Administrator access required for active campus reports.', 'error');
+      viewId = this.getDefaultView();
+      this.currentView = viewId;
+    }
+
     if (viewId === 'admin-queue' && (!this.currentUser || this.currentUser.role !== 'ADMIN')) {
       this.showToast('Administrator access required for the Review Queue.', 'error');
       this.openAuthModal('login');
       return;
     }
 
-    if ((viewId === 'my-posts' || viewId === 'chat') && !this.currentUser) {
+    if ((viewId === 'my-posts' || viewId === 'chat' || viewId === 'complaints') && !this.currentUser) {
       this.showToast('Please sign in with your college credentials first.', 'info');
       this.openAuthModal('login');
       return;
@@ -165,8 +198,14 @@ const App = {
     // View-specific loader
     if (viewId === 'feed') this.loadLostFeed();
     if (viewId === 'my-posts') this.loadMyPosts();
-    if (viewId === 'admin-queue') this.loadAdminMatches();
-    if (viewId === 'chat') this.loadChatRooms();
+    if (viewId === 'admin-queue') { this.loadAdminMatches(); this.loadAdminItems(); }
+    if (viewId === 'chat') {
+      if (this.chatPollInterval) clearInterval(this.chatPollInterval);
+      this.activeChatRoomId = roomId;
+      this.renderEmptyChatMain();
+      this.loadChatRooms();
+    }
+    if (viewId === 'complaints') this.loadComplaints();
 
     // Chat polling management
     if (viewId !== 'chat') {
@@ -176,20 +215,36 @@ const App = {
 
   async loadStats() {
     try {
-      if (this.currentUser && this.currentUser.role === 'ADMIN') {
-        const stats = await api.admin.getStats();
-        const lostEl = document.getElementById('stat-lost-count');
-        const foundEl = document.getElementById('stat-found-count');
-        const resolvedEl = document.getElementById('stat-resolved-count');
-        const badge = document.getElementById('admin-badge-count');
+      const isAdmin = this.currentUser && this.currentUser.role === 'ADMIN';
+      const isSignedIn = Boolean(this.currentUser);
+      const statsPanel = document.getElementById('profile-stats-panel');
+      const badge = document.getElementById('admin-badge-count');
+      const lostEl = document.getElementById('stat-lost-count');
+      const foundEl = document.getElementById('stat-found-count');
+      const resolvedEl = document.getElementById('stat-resolved-count');
 
-        if (lostEl) lostEl.innerText = stats.total_lost;
-        if (foundEl) foundEl.innerText = stats.total_found;
-        if (resolvedEl) resolvedEl.innerText = stats.resolved_items;
-        if (badge) {
-          badge.innerText = stats.pending_matches;
-          badge.style.display = stats.pending_matches > 0 ? 'inline-block' : 'none';
-        }
+      if (statsPanel) statsPanel.hidden = !isSignedIn;
+      if (!isSignedIn) {
+        if (badge) badge.style.display = 'none';
+        return;
+      }
+
+      if (!isAdmin) {
+        const stats = await api.items.getMyStats();
+        if (lostEl) lostEl.innerText = stats.active_lost;
+        if (foundEl) foundEl.innerText = stats.active_found;
+        if (resolvedEl) resolvedEl.innerText = stats.verified_recoveries;
+        if (badge) badge.style.display = 'none';
+        return;
+      }
+
+      const stats = await api.admin.getStats();
+      if (lostEl) lostEl.innerText = stats.total_lost;
+      if (foundEl) foundEl.innerText = stats.total_found;
+      if (resolvedEl) resolvedEl.innerText = stats.resolved_items;
+      if (badge) {
+        badge.innerText = stats.pending_matches;
+        badge.style.display = stats.pending_matches > 0 ? 'inline-block' : 'none';
       }
     } catch {
       // Ignore background stat error
@@ -197,11 +252,18 @@ const App = {
   },
 
   // --------------------------------------------------------------------------
-  // Public Lost Items Feed
+  // Admin Active Reports Feed
   // --------------------------------------------------------------------------
   async loadLostFeed() {
     const grid = document.getElementById('feed-items-grid');
     if (!grid) return;
+
+    if (!this.currentUser || this.currentUser.role !== 'ADMIN') {
+      grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 3rem; color: var(--text-muted);">
+        Active campus reports are available only to administrators.
+      </div>`;
+      return;
+    }
 
     grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 3rem; color: var(--text-muted);">
       <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🔍</div>
@@ -233,7 +295,7 @@ const App = {
 
   renderItemCard(item) {
     const defaultImg = 'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?auto=format&fit=crop&w=600&q=80';
-    const imgUrl = item.image_url || defaultImg;
+    const imgUrl = this.getItemImage(item);
     const isOwner = this.currentUser && this.currentUser.id === item.reporter_id;
     const isAdm = this.currentUser && this.currentUser.role === 'ADMIN';
 
@@ -294,6 +356,7 @@ const App = {
         this.showToast('Lost report published to campus feed!', 'success');
       }
 
+      this.loadStats();
       this.navigateTo('my-posts');
     } catch (err) {
       this.showToast(err.message, 'error');
@@ -329,6 +392,7 @@ const App = {
         this.showToast(`🔎 Match Engine triggered! Found ${res.matches_found} potential owner match(es) sent to Admin Review.`, 'info');
       }
 
+      this.loadStats();
       this.navigateTo('my-posts');
     } catch (err) {
       this.showToast(err.message, 'error');
@@ -379,7 +443,7 @@ const App = {
             </div>
 
             <div style="padding: 1.25rem; display: flex; gap: 1.5rem; flex-wrap: wrap;">
-              <img src="${item.image_url || defaultImg}" style="width: 120px; height: 90px; object-fit: cover; border-radius: var(--radius-sm);" />
+              <img src="${this.getItemImage(item)}" alt="${item.title}" style="width: 120px; height: 90px; object-fit: cover; border-radius: var(--radius-sm);" />
               <div style="flex: 1; min-width: 250px;">
                 <div style="font-size: 0.85rem; color: var(--primary); font-weight: 600; margin-bottom: 0.25rem;">${item.category} • 📍 ${item.location}</div>
                 <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.75rem;">${item.description}</p>
@@ -393,10 +457,10 @@ const App = {
                 ${isMatched ? `
                   <div style="margin-top: 0.5rem; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); padding: 0.75rem 1rem; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
                     <div>
-                      <div style="font-weight: 700; color: #818cf8; font-size: 0.95rem;">🎉 Verified Match Approved by Admin!</div>
-                      <div style="font-size: 0.8rem; color: var(--text-secondary);">Direct private coordination room is unlocked.</div>
+                      <div style="font-weight: 700; color: #818cf8; font-size: 0.95rem;">Item found - you can chat now</div>
+                      <div style="font-size: 0.8rem; color: var(--text-secondary);">A matching lost/found report scored 80% or above, so this private chat is open for both users.</div>
                     </div>
-                    <button class="btn btn-primary btn-sm" onclick="App.openChatRoom('${item.chat_room_id}')">Open Handover Chat</button>
+                    <button class="btn btn-primary btn-sm" onclick="App.openChatRoom('${item.chat_room_id}')">Open Chat</button>
                   </div>
                 ` : ''}
               </div>
@@ -428,6 +492,46 @@ const App = {
   // --------------------------------------------------------------------------
   // Admin Verification & Review Queue
   // --------------------------------------------------------------------------
+  async loadAdminItems(filter = this.adminItemsFilter || 'ALL') {
+    if (this.currentUser?.role !== 'ADMIN') return;
+    this.adminItemsFilter = filter;
+    const grid = document.getElementById('admin-items-grid');
+    const summary = document.getElementById('admin-items-summary');
+    const requestId = this.adminItemsRequest = (this.adminItemsRequest || 0) + 1;
+    document.querySelectorAll('[data-admin-items]').forEach(button => {
+      const active = button.dataset.adminItems === filter;
+      button.classList.toggle('btn-primary', active);
+      button.classList.toggle('btn-secondary', !active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    summary.textContent = 'Loading reports...';
+    grid.replaceChildren();
+    try {
+      const params = filter === 'MATCHED' ? { status_filter: 'MATCHED' }
+        : filter === 'ALL' ? {} : { type_filter: filter };
+      const [result, stats] = await Promise.all([api.admin.getAllItems(params), api.admin.getStats()]);
+      if (requestId !== this.adminItemsRequest || this.currentUser?.role !== 'ADMIN') return;
+      for (const [id, value] of Object.entries({
+        'admin-total-count': stats.total_items,
+        'admin-lost-count': stats.total_lost,
+        'admin-found-count': stats.total_found,
+        'admin-matched-count': stats.matched_items
+      })) document.getElementById(id).textContent = value;
+      summary.textContent = `${result.count} ${filter === 'ALL' ? 'total' : filter.toLowerCase()} report(s)`;
+      const escape = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[ch]);
+      grid.innerHTML = result.items.length ? result.items.map(item => {
+        const safe = Object.fromEntries(Object.entries(item).map(([key, value]) => [key, escape(value)]));
+        if (item.image_url && !/^(\/uploads\/|https?:\/\/)/i.test(item.image_url)) safe.image_url = '';
+        return this.renderItemCard(safe);
+      }).join('') : '<p>No reports in this category.</p>';
+    } catch (err) {
+      if (requestId !== this.adminItemsRequest) return;
+      summary.textContent = `Unable to load reports: ${err.message}`;
+    }
+  },
+
   async loadAdminMatches() {
     const list = document.getElementById('admin-matches-list');
     if (!list) return;
@@ -436,7 +540,23 @@ const App = {
     list.innerHTML = `<div style="text-align: center; padding: 3rem; color: var(--text-muted);">Loading review queue...</div>`;
 
     try {
-      const res = await api.admin.getMatches(filter);
+      const requestId = this.adminMatchesRequest = (this.adminMatchesRequest || 0) + 1;
+      const [res, stats] = await Promise.all([api.admin.getMatches(filter), api.admin.getStats()]);
+      if (requestId !== this.adminMatchesRequest || this.currentUser?.role !== 'ADMIN') return;
+      const statuses = {
+        PENDING: ['Pending Review', stats.pending_matches],
+        APPROVED: ['Approved Matches', stats.approved_matches],
+        REJECTED: ['Rejected Matches', stats.rejected_matches],
+        ALL: ['All Match Suggestions', stats.total_matches]
+      };
+      for (const [status, [label, count]] of Object.entries(statuses)) {
+        document.getElementById(`admin-match-count-${status}`).textContent = count;
+        document.querySelector(`#admin-filter-status option[value="${status}"]`).textContent = `${label} (${count})`;
+        const button = document.querySelector(`[data-admin-match-status="${status}"]`);
+        button.setAttribute('aria-pressed', String(status === filter));
+        button.classList.toggle('btn-primary', status === filter);
+        button.classList.toggle('btn-secondary', status !== filter);
+      }
       if (res.matches.length === 0) {
         list.innerHTML = `
           <div style="text-align: center; padding: 4rem; background: var(--bg-glass-card); border-radius: var(--radius-lg); border: 1px solid var(--border-glass);">
@@ -466,7 +586,7 @@ const App = {
             <div class="score-ring">${m.score}%</div>
             <div>
               <div class="score-text">Match Confidence Score: ${m.score}%</div>
-              <div style="font-size: 0.8rem; color: var(--text-muted);">Evaluated via Multi-factor Token Similarity Engine ($\ge 80\%$ Threshold)</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted);">Evaluated by AI/NLP model over title, description, location, date, and category (80% threshold)</div>
             </div>
           </div>
           <span class="item-status-badge status-${m.match_status.toLowerCase()}" style="position: static;">
@@ -509,20 +629,20 @@ const App = {
         <!-- Algorithmic Breakdown Ribbon -->
         <div class="breakdown-bar">
           <div class="breakdown-item">
-            <div class="breakdown-val">${bd.category_score ?? '--'}%</div>
-            <div style="font-size: 0.725rem; color: var(--text-muted);">Category Match (30%)</div>
+            <div class="breakdown-val">${bd.ai_model_probability ?? '--'}%</div>
+            <div style="font-size: 0.725rem; color: var(--text-muted);">AI Model Probability</div>
           </div>
           <div class="breakdown-item">
             <div class="breakdown-val">${bd.title_score ?? '--'}%</div>
-            <div style="font-size: 0.725rem; color: var(--text-muted);">Title Similarity (35%)</div>
+            <div style="font-size: 0.725rem; color: var(--text-muted);">Title NLP Similarity</div>
           </div>
           <div class="breakdown-item">
             <div class="breakdown-val">${bd.description_score ?? '--'}%</div>
-            <div style="font-size: 0.725rem; color: var(--text-muted);">Description Tokens (20%)</div>
+            <div style="font-size: 0.725rem; color: var(--text-muted);">Description NLP Match</div>
           </div>
           <div class="breakdown-item">
             <div class="breakdown-val">${bd.location_score ?? '--'}%</div>
-            <div style="font-size: 0.725rem; color: var(--text-muted);">Location Proximity (15%)</div>
+            <div style="font-size: 0.725rem; color: var(--text-muted);">Location NLP Match</div>
           </div>
         </div>
 
@@ -552,6 +672,7 @@ const App = {
       const res = await api.admin.approveMatch(matchId);
       this.showToast(res.message, 'success');
       this.loadAdminMatches();
+      this.loadAdminItems();
       this.loadStats();
     } catch (err) {
       this.showToast(err.message, 'error');
@@ -564,6 +685,7 @@ const App = {
       const res = await api.admin.rejectMatch(matchId);
       this.showToast(res.message, 'info');
       this.loadAdminMatches();
+      this.loadAdminItems();
       this.loadStats();
     } catch (err) {
       this.showToast(err.message, 'error');
@@ -576,11 +698,13 @@ const App = {
   async loadChatRooms() {
     const list = document.getElementById('chat-rooms-list');
     if (!list) return;
+    if (!this.activeChatRoomId) this.renderEmptyChatMain();
 
     list.innerHTML = `<div style="padding: 1.5rem; text-align: center; color: var(--text-muted);">Loading chats...</div>`;
 
     try {
       const res = await api.chat.getRooms();
+      if (this.currentView !== 'chat') return;
       if (res.rooms.length === 0) {
         list.innerHTML = `
           <div style="padding: 2rem 1rem; text-align: center; color: var(--text-muted);">
@@ -596,16 +720,18 @@ const App = {
       list.innerHTML = res.rooms.map(r => `
         <div class="room-item ${r.room_id === this.activeChatRoomId ? 'active' : ''}" onclick="App.selectChatRoom('${r.room_id}')">
           <div class="room-title">${r.lost_item_title}</div>
+          <div class="room-status ${String(r.room_status || 'OPEN').toLowerCase()}">${r.room_status || 'OPEN'}</div>
           <div class="room-counterpart">With: ${r.counterpart_name} (${r.my_role})</div>
           <div class="room-snippet">${r.last_message || 'Room unlocked. Start coordination...'}</div>
         </div>
       `).join('');
 
-      // Auto-select first room or active room
-      if (!this.activeChatRoomId && res.rooms.length > 0) {
-        this.selectChatRoom(res.rooms[0].room_id);
-      } else if (this.activeChatRoomId) {
+      // Only open a conversation explicitly selected by the user.
+      if (this.activeChatRoomId && res.rooms.some(room => room.room_id === this.activeChatRoomId)) {
         this.selectChatRoom(this.activeChatRoomId);
+      } else {
+        this.activeChatRoomId = null;
+        this.renderEmptyChatMain();
       }
     } catch (err) {
       list.innerHTML = `<div style="color: var(--danger); padding: 1rem;">Error: ${err.message}</div>`;
@@ -613,8 +739,7 @@ const App = {
   },
 
   openChatRoom(roomId) {
-    this.activeChatRoomId = roomId;
-    this.navigateTo('chat');
+    this.navigateTo('chat', roomId);
   },
 
   async selectChatRoom(roomId) {
@@ -628,6 +753,7 @@ const App = {
     // Start live polling for active room
     if (this.chatPollInterval) clearInterval(this.chatPollInterval);
     await this.fetchAndRenderMessages(roomId);
+    if (this.currentView !== 'chat' || this.activeChatRoomId !== roomId) return;
     this.chatPollInterval = setInterval(() => {
       if (this.currentView === 'chat' && this.activeChatRoomId === roomId) {
         this.fetchAndRenderMessages(roomId, true);
@@ -638,29 +764,97 @@ const App = {
   async fetchAndRenderMessages(roomId, isPolling = false) {
     try {
       const data = await api.chat.getMessages(roomId);
+      if (this.currentView !== 'chat' || this.activeChatRoomId !== roomId) return;
       const headerTitle = document.getElementById('chat-room-title');
       const headerSub = document.getElementById('chat-room-sub');
+      const dismissBtn = document.getElementById('chat-dismiss-btn');
       const resolveBtn = document.getElementById('chat-resolve-btn');
       const stream = document.getElementById('chat-messages-stream');
+      const chatForm = document.getElementById('chat-form');
+      const chatInput = document.getElementById('chat-input-text');
+      const chatSubmit = document.querySelector('#chat-form button[type="submit"]');
+      const mediaButtons = document.querySelectorAll('.chat-media-btn');
+      const canSend = data.can_send !== false && !data.is_dismissed && !data.is_resolved;
 
       if (headerTitle) {
         headerTitle.innerText = `Return Coordination: ${data.meta.lost_title}`;
       }
       if (headerSub) {
-        headerSub.innerText = `Owner: ${data.meta.lost_reporter_name} • Finder: ${data.meta.found_reporter_name}`;
+        headerSub.innerText = `Owner: ${data.meta.lost_reporter_name} - Finder: ${data.meta.found_reporter_name}`;
+      }
+      if (dismissBtn) {
+        dismissBtn.style.display = 'inline-flex';
+        if (data.is_resolved) {
+          dismissBtn.innerText = 'Dismiss';
+          dismissBtn.disabled = true;
+          dismissBtn.className = 'btn btn-secondary btn-sm';
+        } else if (data.can_reopen) {
+          dismissBtn.innerText = 'Continue Chat';
+          dismissBtn.disabled = false;
+          dismissBtn.className = 'btn btn-primary btn-sm';
+          dismissBtn.onclick = () => App.reopenChat(roomId);
+        } else if (data.is_dismissed) {
+          dismissBtn.innerText = 'Dismissed';
+          dismissBtn.disabled = true;
+          dismissBtn.className = 'btn btn-secondary btn-sm';
+        } else {
+          dismissBtn.innerText = 'Dismiss';
+          dismissBtn.disabled = false;
+          dismissBtn.className = 'btn btn-secondary btn-sm';
+          dismissBtn.onclick = () => App.dismissChat(roomId);
+        }
       }
       if (resolveBtn) {
+        resolveBtn.style.display = 'inline-flex';
         if (data.is_resolved) {
-          resolveBtn.innerHTML = '✅ Resolved & Closed';
+          resolveBtn.innerHTML = 'Resolved';
           resolveBtn.disabled = true;
           resolveBtn.className = 'btn btn-secondary btn-sm';
+        } else if (data.is_dismissed) {
+          resolveBtn.innerHTML = 'Resolve Case';
+          resolveBtn.disabled = true;
+          resolveBtn.className = 'btn btn-secondary btn-sm';
+        } else if (data.my_resolution_confirmed) {
+          resolveBtn.innerHTML = 'Not Resolved';
+          resolveBtn.disabled = false;
+          resolveBtn.className = 'btn btn-secondary btn-sm';
+          resolveBtn.onclick = () => App.unresolveHandover(roomId);
         } else {
-          resolveBtn.innerHTML = 'Mark Handover Complete (Close)';
+          resolveBtn.innerHTML = 'Resolve Case';
           resolveBtn.disabled = false;
           resolveBtn.className = 'btn btn-success btn-sm';
           resolveBtn.onclick = () => App.resolveHandover(roomId);
         }
       }
+      if (chatInput) {
+        chatInput.disabled = !canSend;
+        chatInput.placeholder = data.is_resolved
+          ? 'This case is resolved. Chat is closed.'
+          : data.is_dismissed
+            ? data.can_reopen
+              ? 'This chat is dismissed. Click Continue Chat to reopen it.'
+              : 'This chat was dismissed by the other user.'
+            : 'Type a message to coordinate return location, time, or security desk drop-off...';
+      }
+      if (chatForm) {
+        chatForm.style.display = 'flex';
+        chatForm.hidden = false;
+        chatForm.classList.remove('hidden');
+      }
+      if (chatSubmit) {
+        chatSubmit.style.display = 'inline-flex';
+        chatSubmit.hidden = false;
+        chatSubmit.disabled = !canSend;
+      }
+      mediaButtons.forEach(btn => {
+        btn.style.display = 'inline-flex';
+        btn.hidden = false;
+        btn.disabled = !canSend;
+      });
+
+      this.complaintRoomId = roomId;
+      const complaintBtn = document.getElementById('chat-complaint-btn');
+      if (complaintBtn) complaintBtn.style.display = data.can_complain && this.currentUser?.role !== 'ADMIN' ? 'inline-flex' : 'none';
 
       if (!stream) return;
 
@@ -668,7 +862,14 @@ const App = {
 
       stream.innerHTML = data.messages.map(msg => {
         const isMine = this.currentUser && msg.sender_id === this.currentUser.id;
-        const isSystem = msg.sender_role === 'ADMIN' && msg.content.includes('Match Approved');
+        const isSystem = (msg.sender_role === 'ADMIN' && msg.content.includes('Match Approved')) ||
+          msg.content.startsWith('Item found!') ||
+          msg.content.startsWith('Chat dismissed') ||
+          msg.content.startsWith('Chat reopened') ||
+          msg.content.startsWith('Resolution confirmed') ||
+          msg.content.startsWith('Resolution removed') ||
+          msg.content.startsWith('Both users confirmed');
+        const attachmentHtml = this.renderMessageAttachment(msg);
 
         if (isSystem || msg.content.startsWith('✅ Handover resolved!')) {
           return `
@@ -682,6 +883,7 @@ const App = {
         return `
           <div class="msg-bubble ${isMine ? 'mine' : 'theirs'}">
             <div class="msg-sender">${isMine ? 'You' : msg.sender_name}</div>
+            ${attachmentHtml}
             <div>${msg.content}</div>
             <div class="msg-time">${new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
           </div>
@@ -713,8 +915,91 @@ const App = {
     }
   },
 
+  renderMessageAttachment(msg) {
+    if (!msg.attachment_url) return '';
+
+    if (msg.attachment_type === 'image') {
+      return `
+        <a href="${msg.attachment_url}" target="_blank" rel="noopener" class="msg-attachment">
+          <img src="${msg.attachment_url}" alt="${msg.attachment_name || 'Chat photo'}" class="msg-attachment-img" />
+        </a>
+      `;
+    }
+
+    if (msg.attachment_type === 'video') {
+      return `
+        <div class="msg-attachment">
+          <video src="${msg.attachment_url}" class="msg-attachment-video" controls playsinline></video>
+        </div>
+      `;
+    }
+
+    return `
+      <a href="${msg.attachment_url}" target="_blank" rel="noopener" class="msg-file-link">
+        ${msg.attachment_name || 'Open attachment'}
+      </a>
+    `;
+  },
+
+  async handleChatMedia(input) {
+    if (!this.activeChatRoomId) {
+      this.showToast('Select a chat room first.', 'info');
+      input.value = '';
+      return;
+    }
+
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const messageInput = document.getElementById('chat-input-text');
+    const caption = messageInput?.value.trim() || '';
+    if (caption) {
+      formData.append('content', caption);
+    }
+
+    try {
+      this.showToast('Sending media...', 'info');
+      await api.chat.sendMedia(this.activeChatRoomId, formData);
+      if (messageInput && caption) messageInput.value = '';
+      input.value = '';
+      await this.fetchAndRenderMessages(this.activeChatRoomId);
+      this.loadChatRooms();
+    } catch (err) {
+      input.value = '';
+      this.showToast(err.message, 'error');
+    }
+  },
+
+  async dismissChat(roomId) {
+    if (!confirm('Dismiss this chat? Messaging will pause and a complaint with this conversation will automatically be sent to the admin for review.')) return;
+    try {
+      const res = await api.chat.dismissChat(roomId);
+      this.showToast(res.message, 'info');
+      await this.fetchAndRenderMessages(roomId);
+      this.loadChatRooms();
+      this.loadStats();
+    } catch (err) {
+      this.showToast(err.message, 'error');
+    }
+  },
+
+  async reopenChat(roomId) {
+    try {
+      const res = await api.chat.reopenChat(roomId);
+      this.showToast(res.message, 'success');
+      await this.fetchAndRenderMessages(roomId);
+      this.loadChatRooms();
+      this.loadStats();
+    } catch (err) {
+      this.showToast(err.message, 'error');
+    }
+  },
+
   async resolveHandover(roomId) {
-    if (!confirm('Mark this lost & found case as RESOLVED and CLOSED? Both items will be marked as recovered.')) return;
+    if (!confirm('Confirm that the item was exchanged? The case closes only after both users confirm.')) return;
     try {
       const res = await api.chat.resolveHandover(roomId);
       this.showToast(res.message, 'success');
@@ -725,15 +1010,60 @@ const App = {
     }
   },
 
+  async unresolveHandover(roomId) {
+    if (!confirm('Mark this case as not resolved? The chat will remain open.')) return;
+    try {
+      const res = await api.chat.unresolveHandover(roomId);
+      this.showToast(res.message, 'info');
+      await this.fetchAndRenderMessages(roomId);
+      this.loadStats();
+    } catch (err) {
+      this.showToast(err.message, 'error');
+    }
+  },
+
   renderEmptyChatMain() {
+    const title = document.getElementById('chat-room-title');
+    const subtitle = document.getElementById('chat-room-sub');
+    if (title) title.textContent = 'Select a Conversation';
+    if (subtitle) subtitle.textContent = 'Choose a conversation from the left to view its messages.';
+    const complaintBtn = document.getElementById('chat-complaint-btn');
+    if (complaintBtn) complaintBtn.style.display = 'none';
     const stream = document.getElementById('chat-messages-stream');
+    const chatForm = document.getElementById('chat-form');
+    const dismissBtn = document.getElementById('chat-dismiss-btn');
+    const resolveBtn = document.getElementById('chat-resolve-btn');
+    if (chatForm) {
+      chatForm.style.display = 'none';
+      chatForm.hidden = false;
+      chatForm.classList.remove('hidden');
+      const input = document.getElementById('chat-input-text');
+      const submit = document.querySelector('#chat-form button[type="submit"]');
+      const mediaButtons = document.querySelectorAll('.chat-media-btn');
+      if (input) {
+        input.disabled = true;
+        input.placeholder = 'Select a conversation to start chatting.';
+      }
+      if (submit) {
+        submit.style.display = 'inline-flex';
+        submit.hidden = false;
+        submit.disabled = true;
+      }
+      mediaButtons.forEach(btn => {
+        btn.style.display = 'inline-flex';
+        btn.hidden = false;
+        btn.disabled = true;
+      });
+    }
+    if (dismissBtn) dismissBtn.style.display = 'none';
+    if (resolveBtn) resolveBtn.style.display = 'none';
     if (stream) {
       stream.innerHTML = `
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); text-align: center;">
           <div style="font-size: 3rem; margin-bottom: 1rem;">🔒</div>
-          <h3>Private Handover Channels</h3>
+          <h3>Select a conversation</h3>
           <p style="max-width: 360px; font-size: 0.9rem; margin-top: 0.5rem;">
-            When an administrator approves a lost-to-found match, a secure private chat room unlocks between the owner and finder.
+            Choose a conversation from the list to view its messages and coordination history.
           </p>
         </div>
       `;
@@ -756,7 +1086,7 @@ const App = {
       const defaultImg = 'https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?auto=format&fit=crop&w=600&q=80';
 
       content.innerHTML = `
-        <img src="${item.image_url || defaultImg}" style="width: 100%; height: 220px; object-fit: cover; border-radius: var(--radius-md); margin-bottom: 1.25rem;" />
+        <img src="${this.getItemImage(item)}" style="width: 100%; height: 220px; object-fit: cover; border-radius: var(--radius-md); margin-bottom: 1.25rem;" />
         <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
           <span class="item-type-badge ${item.type.toLowerCase()}" style="position: static;">${item.type}</span>
           <span class="item-status-badge status-${item.status.toLowerCase()}" style="position: static;">${item.status}</span>
@@ -847,7 +1177,7 @@ const App = {
       this.closeModal('auth-modal');
       this.showToast(`Account created! Welcome, ${this.currentUser.full_name}.`, 'success');
       this.loadStats();
-      this.navigateTo('feed');
+      this.navigateTo(this.getDefaultView());
     } catch (err) {
       this.showToast(err.message, 'error');
     }
@@ -914,6 +1244,14 @@ const App = {
     document.getElementById('auth-login-form')?.addEventListener('submit', (e) => this.handleLoginSubmit(e));
     document.getElementById('auth-register-form')?.addEventListener('submit', (e) => this.handleRegisterSubmit(e));
     document.getElementById('chat-form')?.addEventListener('submit', (e) => this.handleSendMessage(e));
+    document.getElementById('chat-photo-btn')?.addEventListener('click', () => {
+      document.getElementById('chat-photo-input')?.click();
+    });
+    document.getElementById('chat-video-btn')?.addEventListener('click', () => {
+      document.getElementById('chat-video-input')?.click();
+    });
+    document.getElementById('chat-photo-input')?.addEventListener('change', (e) => this.handleChatMedia(e.target));
+    document.getElementById('chat-video-input')?.addEventListener('change', (e) => this.handleChatMedia(e.target));
 
     // Admin filter
     document.getElementById('admin-filter-status')?.addEventListener('change', () => this.loadAdminMatches());

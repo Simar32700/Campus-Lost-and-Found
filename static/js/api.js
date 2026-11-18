@@ -136,6 +136,10 @@ const api = {
       return api.request('/items/my-posts');
     },
 
+    async getMyStats() {
+      return api.request('/items/my-stats');
+    },
+
     async getItem(id) {
       return api.request(`/items/${id}`);
     },
@@ -149,6 +153,11 @@ const api = {
 
   // Admin endpoints
   admin: {
+    async getAllItems(params = {}) {
+      const query = new URLSearchParams(params);
+      return api.request(`/admin/all-items?${query}`);
+    },
+
     async getMatches(status = 'PENDING') {
       return api.request(`/admin/matches?status_filter=${encodeURIComponent(status)}`);
     },
@@ -187,8 +196,33 @@ const api = {
       });
     },
 
+    async sendMedia(roomId, formData) {
+      return api.request(`/chat/rooms/${roomId}/messages/media`, {
+        method: 'POST',
+        body: formData
+      });
+    },
+
+    async dismissChat(roomId) {
+      return api.request(`/chat/rooms/${roomId}/dismiss`, {
+        method: 'POST'
+      });
+    },
+
+    async reopenChat(roomId) {
+      return api.request(`/chat/rooms/${roomId}/reopen`, {
+        method: 'POST'
+      });
+    },
+
     async resolveHandover(roomId) {
       return api.request(`/chat/rooms/${roomId}/resolve`, {
+        method: 'POST'
+      });
+    },
+
+    async unresolveHandover(roomId) {
+      return api.request(`/chat/rooms/${roomId}/unresolve`, {
         method: 'POST'
       });
     }

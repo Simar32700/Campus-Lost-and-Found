@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Campus Lost & Found Platform | Smart Matching & Secure Handover</title>
   <meta name="description" content="Official University Campus Lost and Found Prototype. Algorithmic similarity matching, anti-fraud hidden reporting, admin verification queue, and in-app return coordination." />
-  <link rel="stylesheet" href="/static/css/styles.css" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=campus-footer-4" />
 </head>
 <body>
 
@@ -22,7 +22,7 @@
         </div>
       </div>
       <div style="color: var(--text-muted); font-size: 0.75rem;">
-        Prototype for 10–15 Users • Multi-factor Scoring ($\ge 80\%$)
+        Prototype for 10–15 Users • Multi-factor Scoring 
       </div>
     </div>
   </aside>
@@ -36,8 +36,8 @@
       </div>
 
       <nav class="nav-menu" aria-label="Primary Navigation">
-        <div class="nav-link active" data-view="feed" onclick="App.navigateTo('feed')">
-          <span>🔍</span> Browse Lost Feed
+        <div class="nav-link active" id="nav-feed-link" data-view="feed" onclick="App.navigateTo('feed')" style="display: none;">
+          <span>🔍</span> Active Reports
         </div>
         <div class="nav-link" data-view="report-lost" onclick="App.navigateTo('report-lost')">
           <span>📢</span> Report Lost
@@ -55,6 +55,7 @@
         <div class="nav-link" data-view="chat" onclick="App.navigateTo('chat')">
           <span>💬</span> Messages
         </div>
+        <button type="button" class="nav-link" data-view="complaints" onclick="App.navigateTo('complaints')">Complaints</button>
       </nav>
 
       <div class="nav-actions">
@@ -73,16 +74,16 @@
       <div class="hero-badge">🎓 Official University Campus Services</div>
       <h1 class="hero-title">Recover What's Lost. <span>Return What's Found.</span></h1>
       <p class="hero-subtitle">
-        Automated confidence matching ($\ge 80\%$), confidential reporting to prevent fraudulent claims, administrator verification, and direct in-app recovery chat.
+        Automated confidence matching , confidential reporting to prevent fraudulent claims, administrator verification, and direct in-app recovery chat.
       </p>
 
-      <div class="hero-stats">
+      <div class="hero-stats" id="profile-stats-panel" hidden>
         <div class="stat-box">
-          <div class="stat-num" id="stat-lost-count">3</div>
+          <div class="stat-num" id="stat-lost-count">0</div>
           <div class="stat-label">Active Lost Reports</div>
         </div>
         <div class="stat-box">
-          <div class="stat-num" id="stat-found-count">3</div>
+          <div class="stat-num" id="stat-found-count">0</div>
           <div class="stat-label">Protected Found Reports</div>
         </div>
         <div class="stat-box">
@@ -96,9 +97,9 @@
   <!-- Main View Container -->
   <main class="container">
 
-    <!-- VIEW 1: PUBLIC LOST ITEMS FEED -->
+    <!-- VIEW 1: ADMIN ACTIVE REPORTS FEED -->
     <section class="view-section active" id="view-feed" aria-labelledby="feed-heading">
-      <h2 id="feed-heading" style="display: none;">Public Lost Items Feed</h2>
+      <h2 id="feed-heading" style="display: none;">Admin Active Reports Feed</h2>
       <div class="toolbar">
         <div class="search-row">
           <div class="search-input-wrapper">
@@ -297,6 +298,18 @@
 
     <!-- VIEW 5: ADMIN MATCH REVIEW QUEUE -->
     <section class="view-section" id="view-admin-queue" aria-labelledby="admin-queue-heading">
+      <div style="margin-bottom: 2rem;">
+        <div class="complaints-heading"><h2>Admin Item Overview</h2><div style="display: flex; flex-wrap: wrap; gap: 0.75rem;"><button type="button" class="btn btn-secondary" onclick="App.navigateTo('complaints')">Open Complaint Inbox</button><button type="button" class="btn btn-secondary" onclick="App.loadAdminItems(); App.loadAdminMatches(); App.loadStats()">Refresh</button></div></div>
+        <p style="color: var(--text-secondary); margin: 0.5rem 0 1rem;">Browse every campus report, including confidential found items. Matched counts represent individual reports currently marked MATCHED.</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem;" role="group" aria-label="Filter admin items">
+          <button type="button" class="btn btn-primary" data-admin-items="ALL" aria-pressed="true" onclick="App.loadAdminItems('ALL')">All items (<span id="admin-total-count">0</span>)</button>
+          <button type="button" class="btn btn-secondary" data-admin-items="LOST" aria-pressed="false" onclick="App.loadAdminItems('LOST')">Lost (<span id="admin-lost-count">0</span>)</button>
+          <button type="button" class="btn btn-secondary" data-admin-items="FOUND" aria-pressed="false" onclick="App.loadAdminItems('FOUND')">Found (<span id="admin-found-count">0</span>)</button>
+          <button type="button" class="btn btn-secondary" data-admin-items="MATCHED" aria-pressed="false" onclick="App.loadAdminItems('MATCHED')">Matched items (<span id="admin-matched-count">0</span>)</button>
+        </div>
+        <p id="admin-items-summary" role="status" style="margin-bottom: 1rem;"></p>
+        <div id="admin-items-grid" class="items-grid"></div>
+      </div>
       <div class="admin-header">
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -319,6 +332,16 @@
         </div>
       </div>
 
+      <table style="width: 100%; max-width: 620px; margin-bottom: 1.5rem; border-collapse: collapse; text-align: left;">
+        <caption style="text-align: left; font-weight: 700; margin-bottom: 0.75rem;">Match Status Totals</caption>
+        <thead><tr><th scope="col" style="padding: 0.75rem;">Status</th><th scope="col" style="padding: 0.75rem; text-align: right;">Total</th></tr></thead>
+        <tbody>
+          <tr style="border-top: 1px solid var(--border-glass);"><th scope="row" style="padding: 0.75rem;"><button type="button" class="btn btn-secondary btn-sm" data-admin-match-status="PENDING" aria-pressed="true" onclick="document.getElementById('admin-filter-status').value='PENDING'; App.loadAdminMatches()">Pending Review</button></th><td id="admin-match-count-PENDING" style="padding: 0.75rem; text-align: right;" aria-live="polite">--</td></tr>
+          <tr style="border-top: 1px solid var(--border-glass);"><th scope="row" style="padding: 0.75rem;"><button type="button" class="btn btn-secondary btn-sm" data-admin-match-status="APPROVED" aria-pressed="false" onclick="document.getElementById('admin-filter-status').value='APPROVED'; App.loadAdminMatches()">Approved Matches</button></th><td id="admin-match-count-APPROVED" style="padding: 0.75rem; text-align: right;" aria-live="polite">--</td></tr>
+          <tr style="border-top: 1px solid var(--border-glass);"><th scope="row" style="padding: 0.75rem;"><button type="button" class="btn btn-secondary btn-sm" data-admin-match-status="REJECTED" aria-pressed="false" onclick="document.getElementById('admin-filter-status').value='REJECTED'; App.loadAdminMatches()">Rejected Matches</button></th><td id="admin-match-count-REJECTED" style="padding: 0.75rem; text-align: right;" aria-live="polite">--</td></tr>
+          <tr style="border-top: 1px solid var(--border-glass);"><th scope="row" style="padding: 0.75rem;"><button type="button" class="btn btn-secondary btn-sm" data-admin-match-status="ALL" aria-pressed="false" onclick="document.getElementById('admin-filter-status').value='ALL'; App.loadAdminMatches()">All Match Suggestions</button></th><td id="admin-match-count-ALL" style="padding: 0.75rem; text-align: right;" aria-live="polite">--</td></tr>
+        </tbody>
+      </table>
       <div class="matches-list" id="admin-matches-list">
         <!-- Rendered dynamically -->
       </div>
@@ -351,8 +374,10 @@
               <div id="chat-room-title" style="font-weight: 700; font-size: 1.05rem;">Select a Conversation</div>
               <div id="chat-room-sub" style="font-size: 0.8rem; color: var(--text-secondary);">Choose a room from the left to view coordination history.</div>
             </div>
-            <div>
-              <button id="chat-resolve-btn" class="btn btn-success btn-sm" style="display: none;">Mark Handover Complete</button>
+            <div class="chat-header-actions">
+              <button id="chat-complaint-btn" type="button" class="btn btn-danger-outline btn-sm" style="display:none" onclick="App.openComplaintForm()">Report user</button>
+              <button id="chat-dismiss-btn" class="btn btn-secondary btn-sm" style="display: none;">Dismiss</button>
+              <button id="chat-resolve-btn" class="btn btn-success btn-sm" style="display: none;">Resolved</button>
             </div>
           </div>
 
@@ -361,6 +386,12 @@
           </div>
 
           <form id="chat-form" class="chat-input-bar">
+            <div class="chat-media-actions" aria-label="Send media">
+              <button type="button" class="chat-media-btn" id="chat-photo-btn" title="Take or send photo" aria-label="Take or send photo">Photo</button>
+              <button type="button" class="chat-media-btn" id="chat-video-btn" title="Record or send video" aria-label="Record or send video">Video</button>
+              <input type="file" id="chat-photo-input" accept="image/*" capture="environment" style="display: none;" />
+              <input type="file" id="chat-video-input" accept="video/*" capture="environment" style="display: none;" />
+            </div>
             <input type="text" id="chat-input-text" class="chat-input" placeholder="Type a message to coordinate return location, time, or security desk drop-off..." autocomplete="off" />
             <button type="submit" class="btn btn-primary">Send</button>
           </form>
@@ -368,7 +399,56 @@
       </div>
     </section>
 
+    <section class="view-section" id="view-complaints" aria-labelledby="complaints-title">
+      <div class="complaints-heading"><div><span class="complaint-eyebrow">CAMPUS SUPPORT</span><h2 id="complaints-title">Complaints</h2><p id="complaints-intro"></p></div><div style="display: flex; flex-wrap: wrap; gap: 0.75rem;"><button id="complaints-back-admin" type="button" class="btn btn-secondary" style="display: none;" onclick="App.navigateTo('admin-queue')">Back to Admin</button><button type="button" class="btn btn-secondary" onclick="App.loadComplaints()">Refresh</button></div></div>
+      <div id="complaint-counts" class="complaint-counts" role="group" aria-label="Complaint status filters"></div>
+      <div class="complaint-workspace"><div id="complaint-list" aria-live="polite"></div><aside id="complaint-review" class="complaint-review"><h3>Select a complaint</h3><p>Choose an entry to view its details and review history.</p></aside></div>
+    </section>
   </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-columns">
+        <div class="footer-about">
+          <a class="footer-brand" href="#" onclick="App.navigateTo(App.getDefaultView()); return false;">CampusFinder</a>
+          <p>Lost something? Found something?<br />Help it find its way home.</p>
+          <span class="footer-campus">Built for our campus community.</span>
+        </div>
+        <nav class="footer-column" aria-label="Footer reports">
+          <h2>Lost &amp; found</h2>
+          <a href="#" onclick="App.navigateTo('report-lost'); return false;">Report a lost item</a>
+          <a href="#" onclick="App.navigateTo('report-found'); return false;">Report a found item</a>
+          <a href="#" onclick="App.navigateTo('my-posts'); return false;">My reports</a>
+        </nav>
+        <nav class="footer-column" aria-label="Footer coordination">
+          <h2>Stay connected</h2>
+          <a href="#" onclick="App.navigateTo('chat'); return false;">Messages</a>
+          <a href="#" onclick="App.navigateTo('complaints'); return false;">Complaints &amp; updates</a>
+          <a href="#" onclick="document.getElementById('help-modal').classList.add('active'); return false;">How it works</a>
+        </nav>
+        <div class="footer-column footer-support">
+          <h2>Here to help</h2>
+          <p>Need help with a report, a return, or your account? Get in touch with our team.</p>
+          <a id="footer-email-link" class="footer-email" href="mailto:?subject=CampusFinder%20Support">Email us <span aria-hidden="true">&#8599;</span></a>
+          <span class="footer-email-note">Opens your email app.</span>
+        </div>
+      </div>
+      <div class="footer-bottom"><span>&copy; 2026 CampusFinder</span><span>Find it. Match it. Return it.</span><a href="#" onclick="window.scrollTo({top: 0, behavior: 'smooth'}); return false;">Back to top &#8593;</a></div>
+    </div>
+  </footer>
+
+  <div class="modal-overlay" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div class="modal-dialog">
+      <button type="button" class="modal-close" aria-label="Close help" onclick="App.closeModal('help-modal')">&times;</button>
+      <h2 id="help-title">How CampusFinder works</h2>
+      <ol class="help-steps">
+        <li><strong>Report your item.</strong> Add its description, location, date, and a photo if you have one.</li>
+        <li><strong>Let us find a match.</strong> Similar lost and found reports go to a campus administrator for review.</li>
+        <li><strong>Coordinate the return.</strong> Once a match is approved, use Messages to arrange the handover.</li>
+        <li><strong>Need more help?</strong> Follow up through Complaints after a dismissed chat, or email our team for account and website support.</li>
+      </ol>
+    </div>
+  </div>
 
   <!-- MODAL: ITEM DETAILS -->
   <div class="modal-overlay" id="item-detail-modal" role="dialog" aria-modal="true" aria-labelledby="item-modal-title">
@@ -437,11 +517,23 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="complaint-modal" role="dialog" aria-modal="true" aria-labelledby="complaint-form-title">
+    <div class="modal-dialog"><button class="modal-close" aria-label="Close" onclick="App.closeModal('complaint-modal')">&times;</button>
+      <span class="complaint-eyebrow">USER SUPPORT</span><h2 id="complaint-form-title">Report the other user</h2>
+      <p class="complaint-help">Your complaint and this conversation will be available to the campus admin for review. An automatic entry is already created when a chat is dismissed.</p>
+      <form onsubmit="App.submitComplaint(event)">
+        <div class="form-group"><label class="form-label" for="complaint-category">Reason</label><select id="complaint-category" class="select-input" required><option value="FALSE_CLAIM">False ownership claim</option><option value="HARASSMENT">Harassment or inappropriate behaviour</option><option value="NO_RESPONSE">No response</option><option value="HANDOVER_ISSUE">Problem with item handover</option><option value="OTHER">Other concern</option></select></div>
+        <div class="form-group"><label class="form-label" for="complaint-details">What happened?</label><textarea id="complaint-details" class="form-input" rows="5" minlength="10" maxlength="3000" placeholder="Describe the issue so the admin can investigate." required></textarea></div>
+        <button id="complaint-submit" type="submit" class="btn btn-primary">Send complaint</button>
+      </form>
+    </div>
+  </div>
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
   <!-- JavaScript Scripts -->
-  <script src="/static/js/api.js"></script>
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/api.js?v=admin-no-report-forms-1"></script>
+  <script src="/static/js/app.js?v=chat-select-first-4"></script>
+  <script src="/static/js/complaints.js?v=complaint-photos-2"></script>
 </body>
 </html>
