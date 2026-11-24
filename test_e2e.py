@@ -1,147 +1,112 @@
-import requests
-import json
-import uuid
+"""Run the complete prototype journey against an isolated SQLite database.
 
-BASE_URL = "http://127.0.0.1:8000"
+Usage: python -B test_e2e.py
+"""
+
+import tempfile
+import uuid
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+import database
+
+
+def authorized(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def login(client, email, password):
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+    return authorized(response.json()["access_token"])
+
 
 def test_full_pipeline():
-    print("=== 1. Checking Static & Web App Serving ===")
-    r = requests.get(f"{BASE_URL}/")
-    assert r.status_code == 200, f"Root failed: {r.status_code}"
-    assert "CampusFinder" in r.text, "Index page title missing"
-    print("[PASS] Static index.html served successfully")
+    with tempfile.TemporaryDirectory() as directory:
+        database.DATABASE_PATH = Path(directory) / "test.db"
+        from main import app  # Import after selecting the disposable database.
 
-    r = requests.get(f"{BASE_URL}/static/css/styles.css")
-    assert r.status_code == 200, "CSS failed to load"
-    print("[PASS] CSS design system loaded successfully")
+        with TestClient(app) as client:
+            assert client.get("/").status_code == 200
+            assert "CampusFinder" in client.get("/").text
+            assert client.get("/static/css/styles.css").status_code == 200
+            assert client.get("/api/health").json() == {"status": "ok"}
 
-    print("\n=== 2. Testing College Email Auth & RBAC ===")
-    # 2.1 Non-college email registration rejection
-    bad_reg = requests.post(f"{BASE_URL}/api/auth/register", json={
-        "email": "intruder@gmail.com",
-        "password": "Password123",
-        "full_name": "Non Student"
-    })
-    assert bad_reg.status_code == 400, f"Expected 400 for gmail, got {bad_reg.status_code}"
-    print("[PASS] Non-college email correctly rejected with 400 Bad Request")
+            bad = client.post("/api/auth/register", json={
+                "email": "intruder@gmail.com", "password": "Password123", "full_name": "Non Student"
+            })
+            assert bad.status_code == 400
 
-    # 2.2 Valid college email registration
-    test_email = f"taylor.{uuid.uuid4().hex[:8]}@stanford.edu"
-    good_reg = requests.post(f"{BASE_URL}/api/auth/register", json={
-        "email": test_email,
-        "password": "Password123",
-        "full_name": "Taylor Swift",
-        "phone": "555-9999"
-    })
-    assert good_reg.status_code == 200, f"Expected 200 for valid edu email, got {good_reg.status_code}"
-    print("[PASS] Valid college email registered successfully")
+            email = f"test.{uuid.uuid4().hex[:8]}@stanford.edu"
+            registered = client.post("/api/auth/register", json={
+                "email": email, "password": "Password123", "full_name": "Test Student", "role": "ADMIN"
+            })
+            assert registered.status_code == 200, registered.text
+            assert registered.json()["user"]["role"] == "USER"
+            outsider = authorized(registered.json()["access_token"])
 
-    # 2.3 Student login
-    login_alex = requests.post(f"{BASE_URL}/api/auth/login", json={
-        "email": "alex.chen@campus.edu",
-        "password": "Student@123"
-    })
-    assert login_alex.status_code == 200, "Alex login failed"
-    alex_token = login_alex.json()["access_token"]
-    alex_headers = {"Authorization": f"Bearer {alex_token}"}
-    print("[PASS] Student Alex Chen logged in successfully")
+            alex = login(client, "alex.chen@campus.edu", "Student@123")
+            priya = login(client, "priya.patel@campus.edu", "Student@123")
+            admin = login(client, "admin@campus.edu", "Admin@123")
 
-    # 2.4 Admin login
-    login_admin = requests.post(f"{BASE_URL}/api/auth/login", json={
-        "email": "admin@campus.edu",
-        "password": "Admin@123"
-    })
-    assert login_admin.status_code == 200, "Admin login failed"
-    admin_token = login_admin.json()["access_token"]
-    admin_headers = {"Authorization": f"Bearer {admin_token}"}
-    print("[PASS] Campus Administrator logged in successfully")
+            report = {
+                "title": "Unique Green Notebook", "category": "Books",
+                "description": "Unique green notebook with a red spine and astronomy notes",
+                "location": "North Library Desk", "item_date": "2026-11-24"
+            }
+            lost = client.post("/api/items/lost", headers=outsider, data=report)
+            assert lost.status_code == 200 and lost.json()["status"] == "OPEN"
+            assert client.get("/api/items/my-posts", headers=outsider).json()["count"] == 1
+            found = client.post("/api/items/found", headers=priya, data=report)
+            assert found.status_code == 200 and found.json()["matches_found"] >= 1
+            assert client.get(f"/api/items/{found.json()['item_id']}", headers=outsider).status_code == 403
+            assert client.get("/api/chat/rooms", headers=outsider).json()["count"] == 0
 
-    print("\n=== 3. Testing Public Feed & Hidden Anti-Fraud Found Items ===")
-    feed_res = requests.get(f"{BASE_URL}/api/items/lost", headers=admin_headers)
-    assert feed_res.status_code == 200
-    feed_items = feed_res.json()["items"]
-    # Verify ONLY lost items are in public feed
-    assert all(item["type"] == "LOST" for item in feed_items), "CRITICAL: Found items leaked into public feed!"
-    print(f"[PASS] Public feed contains {len(feed_items)} items; zero found items leaked (Anti-fraud enforced)")
+            assert client.get("/api/items/lost", headers=outsider).status_code == 403
+            search = client.get("/api/items/lost?search=MacBook", headers=admin)
+            assert search.status_code == 200
+            assert any("MacBook" in item["title"] for item in search.json()["items"])
+            assert all(item["type"] == "LOST" for item in search.json()["items"])
+            assert client.get("/api/items/item-found-001", headers=outsider).status_code == 403
 
-    # Test search query
-    search_res = requests.get(f"{BASE_URL}/api/items/lost?search=MacBook", headers=admin_headers)
-    assert search_res.status_code == 200
-    search_items = search_res.json()["items"]
-    assert any("MacBook" in i["title"] for i in search_items), "Search for MacBook failed"
-    print(f"[PASS] Search filter returned {len(search_items)} matching results")
+            queue = client.get("/api/admin/matches", headers=admin)
+            assert queue.status_code == 200
+            match = next(m for m in queue.json()["matches"] if m["lost_id"] == "item-lost-001")
+            assert match["score"] >= 80 and match["match_status"] == "PENDING"
+            assert match["chat_room_id"] is None
+            assert client.get("/api/chat/rooms", headers=alex).json()["count"] == 0
+            match_id = match["match_id"]
+            assert client.post(f"/api/admin/matches/{match_id}/approve", headers=alex).status_code == 403
 
-    print("\n=== 4. Testing Automated AI/NLP Matching & Chat Unlock ===")
-    matches_res = requests.get(f"{BASE_URL}/api/admin/matches?status_filter=ALL", headers=admin_headers)
-    assert matches_res.status_code == 200
-    matches = matches_res.json()["matches"]
-    assert len(matches) > 0, "No AI/NLP matches found"
-    
-    match = next((m for m in matches if m["score"] >= 80 and m.get("chat_room_id")), matches[0])
-    match_id = match["match_id"]
-    print(f"[PASS] AI/NLP match detected: '{match['lost_title']}' <--> '{match['found_title']}'")
-    print(f"       Confidence Score: {match['score']}% (Threshold: >= 80%)")
-    print(f"       Model: {match['breakdown'].get('model')}")
-    print(f"       NLP Breakdown: Description {match['breakdown']['description_score']}%, Location {match['breakdown']['location_score']}%, Model probability {match['breakdown'].get('ai_model_probability')}%")
+            approved = client.post(f"/api/admin/matches/{match_id}/approve", headers=admin)
+            assert approved.status_code == 200, approved.text
+            room_id = approved.json()["chat_room_id"]
+            assert client.post(f"/api/admin/matches/{match_id}/approve", headers=admin).status_code == 400
+            assert client.post(f"/api/admin/matches/{match_id}/reject", headers=admin).status_code == 400
+            assert any(r["room_id"] == room_id for r in client.get("/api/chat/rooms", headers=alex).json()["rooms"])
+            assert any(r["room_id"] == room_id for r in client.get("/api/chat/rooms", headers=priya).json()["rooms"])
+            assert client.get(f"/api/chat/rooms/{room_id}/messages", headers=outsider).status_code == 403
+            assert client.get("/api/items/item-found-001", headers=alex).status_code == 200
 
-    print("\n=== 5. Testing Automatic State Transition ===")
-    if match["match_status"] == "APPROVED" and match.get("chat_room_id"):
-        chat_room_id = match["chat_room_id"]
-        print(f"[PASS] Match auto-approved. Both items are MATCHED and private chat exists: {chat_room_id}")
-    else:
-        approve_res = requests.post(f"{BASE_URL}/api/admin/matches/{match_id}/approve", headers=admin_headers)
-        assert approve_res.status_code == 200, f"Approve match failed: {approve_res.text}"
-        chat_room_id = approve_res.json()["chat_room_id"]
-        print(f"[PASS] Existing pending match approved. Private Chat Room created: {chat_room_id}")
+            for headers, message in ((alex, "Can we meet at the library?"), (priya, "Yes, at 3 pm.")):
+                sent = client.post(f"/api/chat/rooms/{room_id}/messages", headers=headers, json={"content": message})
+                assert sent.status_code == 200, sent.text
+            messages = client.get(f"/api/chat/rooms/{room_id}/messages", headers=alex).json()["messages"]
+            assert len(messages) >= 3
 
-    print("\n=== 6. Testing In-App Communication & Handover Resolution ===")
-    # 6.1 Alex fetches his unlocked chat rooms
-    alex_rooms = requests.get(f"{BASE_URL}/api/chat/rooms", headers=alex_headers)
-    assert alex_rooms.status_code == 200
-    assert any(r["room_id"] == chat_room_id for r in alex_rooms.json()["rooms"]), "Chat room not visible to Alex"
-    print("[PASS] Chat room successfully visible to student Alex Chen")
+            first = client.post(f"/api/chat/rooms/{room_id}/resolve", headers=alex)
+            assert first.status_code == 200 and first.json()["status"] == "WAITING_FOR_OTHER_USER"
+            assert client.get("/api/items/item-lost-001", headers=alex).json()["status"] == "MATCHED"
+            second = client.post(f"/api/chat/rooms/{room_id}/resolve", headers=priya)
+            assert second.status_code == 200 and second.json()["status"] == "RESOLVED"
+            assert client.get("/api/items/item-lost-001", headers=alex).json()["status"] == "CLOSED"
+            assert client.post(f"/api/chat/rooms/{room_id}/messages", headers=alex, json={"content": "Late message"}).status_code == 400
 
-    # 6.2 Alex sends a message to coordinate return
-    msg_res = requests.post(f"{BASE_URL}/api/chat/rooms/{chat_room_id}/messages", headers=alex_headers, json={
-        "content": "Hi Priya! Thank you so much for finding my MacBook. Can we meet at the Library 1st floor helpdesk today at 3pm?"
-    })
-    assert msg_res.status_code == 200
-    print("[PASS] Alex sent coordination message in unlocked chat room")
+            stats = client.get("/api/admin/stats", headers=admin).json()
+            assert stats["approved_matches"] >= 1 and stats["resolved_items"] >= 2
+            print("PASS: startup, registration, reporting, privacy, search, review, chat and two-person resolution.")
 
-    # 6.3 Priya logs in and sends reply
-    login_priya = requests.post(f"{BASE_URL}/api/auth/login", json={
-        "email": "priya.patel@campus.edu",
-        "password": "Student@123"
-    })
-    priya_token = login_priya.json()["access_token"]
-    priya_headers = {"Authorization": f"Bearer {priya_token}"}
-
-    msg2_res = requests.post(f"{BASE_URL}/api/chat/rooms/{chat_room_id}/messages", headers=priya_headers, json={
-        "content": "Hi Alex, yes! I will leave it with the desk staff or meet you there at 3pm. See you then!"
-    })
-    assert msg2_res.status_code == 200
-    print("[PASS] Priya sent response in unlocked chat room")
-
-    # 6.4 Fetch message stream
-    messages_res = requests.get(f"{BASE_URL}/api/chat/rooms/{chat_room_id}/messages", headers=alex_headers)
-    assert messages_res.status_code == 200
-    messages = messages_res.json()["messages"]
-    assert len(messages) >= 3, "Expected at least 3 messages (system + 2 user messages)"
-    print(f"[PASS] Message stream verified with {len(messages)} chronological messages")
-
-    # 6.5 Resolve handover
-    resolve_res = requests.post(f"{BASE_URL}/api/chat/rooms/{chat_room_id}/resolve", headers=alex_headers)
-    assert resolve_res.status_code == 200
-    print("[PASS] Handover marked as CLOSED! Items lifecycle updated to resolved.")
-
-    print("\n=== 7. Verifying Admin Metrics ===")
-    stats_res = requests.get(f"{BASE_URL}/api/admin/stats", headers=admin_headers)
-    assert stats_res.status_code == 200
-    stats = stats_res.json()
-    print(f"[PASS] Admin Stats: Total Lost: {stats['total_lost']}, Total Found: {stats['total_found']}, Approved Matches: {stats['approved_matches']}, Resolved: {stats['resolved_items']}")
-
-    print("\n[SUCCESS] ALL MUST-HAVE TEST CASES PASSED FLAWLESSLY!")
 
 if __name__ == "__main__":
     test_full_pipeline()
-

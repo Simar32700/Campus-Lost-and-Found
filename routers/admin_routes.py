@@ -100,20 +100,22 @@ def approve_match(match_id: str, admin_user: dict = Depends(require_admin)):
         if not match:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found")
         
-        if match["status"] == "APPROVED":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Match is already approved")
+        if match["status"] != "PENDING":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending matches can be approved")
 
         lost_item_id = match["lost_item_id"]
         found_item_id = match["found_item_id"]
 
         # Fetch reporters
-        cursor.execute("SELECT reporter_id, title FROM items WHERE id = ?", (lost_item_id,))
+        cursor.execute("SELECT reporter_id, title, status FROM items WHERE id = ?", (lost_item_id,))
         lost_item = cursor.fetchone()
-        cursor.execute("SELECT reporter_id, title FROM items WHERE id = ?", (found_item_id,))
+        cursor.execute("SELECT reporter_id, title, status FROM items WHERE id = ?", (found_item_id,))
         found_item = cursor.fetchone()
 
         if not lost_item or not found_item:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Associated items no longer exist")
+        if lost_item["status"] != "OPEN" or found_item["status"] != "OPEN":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Both reports must be open before approval")
 
         lost_reporter_id = lost_item["reporter_id"]
         found_reporter_id = found_item["reporter_id"]
@@ -126,6 +128,15 @@ def approve_match(match_id: str, admin_user: dict = Depends(require_admin)):
 
         # 2. Update items status to MATCHED
         cursor.execute("UPDATE items SET status = 'MATCHED' WHERE id IN (?, ?)", (lost_item_id, found_item_id))
+        # Other suggestions involving either report cannot be approved as well.
+        cursor.execute(
+            """
+            UPDATE matches SET status = 'REJECTED', admin_id = ?, reviewed_at = ?
+            WHERE status = 'PENDING' AND id != ?
+              AND (lost_item_id IN (?, ?) OR found_item_id IN (?, ?))
+            """,
+            (admin_user["id"], now, match_id, lost_item_id, found_item_id, lost_item_id, found_item_id)
+        )
 
         # 3. Create or fetch chat room
         cursor.execute("SELECT id FROM chat_rooms WHERE match_id = ?", (match_id,))
@@ -175,6 +186,8 @@ def reject_match(match_id: str, admin_user: dict = Depends(require_admin)):
         match = cursor.fetchone()
         if not match:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found")
+        if match["status"] != "PENDING":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending matches can be rejected")
 
         cursor.execute(
             "UPDATE matches SET status = 'REJECTED', admin_id = ?, reviewed_at = ? WHERE id = ?",

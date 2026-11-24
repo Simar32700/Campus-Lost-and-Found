@@ -3,8 +3,8 @@ from pathlib import Path
 
 # Base Paths
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = BASE_DIR / "campus_lost_found.db"
-UPLOAD_DIR = BASE_DIR / "uploads"
+DATABASE_PATH = Path(os.getenv("CAMPUS_DB_PATH", str(BASE_DIR / "campus_lost_found.db"))).expanduser().resolve()
+UPLOAD_DIR = Path(os.getenv("CAMPUS_UPLOAD_DIR", str(BASE_DIR / "uploads"))).expanduser().resolve()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Security & Authentication

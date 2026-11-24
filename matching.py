@@ -269,47 +269,10 @@ def calculate_match_score(lost_item: dict, found_item: dict) -> tuple[float, dic
 
     return total_score, breakdown
 
-def open_chat_for_confirmed_match(cursor, match_id: str, lost: dict, found: dict, now: str) -> str:
-    """
-    Opens the recovery chat immediately for a high-confidence automatic match.
-    """
-    cursor.execute("UPDATE matches SET status = 'APPROVED', reviewed_at = ? WHERE id = ?", (now, match_id))
-    cursor.execute("UPDATE items SET status = 'MATCHED' WHERE id IN (?, ?)", (lost["id"], found["id"]))
-
-    cursor.execute("SELECT id FROM chat_rooms WHERE match_id = ?", (match_id,))
-    existing_chat = cursor.fetchone()
-    if existing_chat:
-        return existing_chat["id"]
-
-    chat_room_id = str(uuid.uuid4())
-    cursor.execute(
-        """
-        INSERT INTO chat_rooms (id, match_id, lost_reporter_id, found_reporter_id, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (chat_room_id, match_id, lost["reporter_id"], found["reporter_id"], now)
-    )
-
-    msg_id = str(uuid.uuid4())
-    initial_msg = (
-        f"Item found! This lost report matched '{found['title']}' with "
-        f"{MATCH_CONFIDENCE_THRESHOLD:.0f}% or higher confidence. You can now chat here "
-        "to coordinate the return or handover."
-    )
-    cursor.execute(
-        """
-        INSERT INTO messages (id, chat_room_id, sender_id, content, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (msg_id, chat_room_id, lost["reporter_id"], initial_msg, now)
-    )
-
-    return chat_room_id
-
 def evaluate_item_matches(item_id: str) -> list[dict]:
     """
     Evaluates an item against candidate items of the opposite type.
-    Automatically opens chat for scores >= MATCH_CONFIDENCE_THRESHOLD (80%).
+    Queues high-confidence pairs for administrator review.
     """
     created_matches = []
     with get_db() as conn:
@@ -350,99 +313,24 @@ def evaluate_item_matches(item_id: str) -> list[dict]:
                 now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
                 if existing:
-                    match_id = existing["id"]
-                    if existing["status"] == "REJECTED":
-                        continue
-                else:
-                    match_id = str(uuid.uuid4())
-                    cursor.execute(
-                        """
-                        INSERT INTO matches (id, lost_item_id, found_item_id, score, breakdown, status, created_at)
-                        VALUES (?, ?, ?, ?, ?, 'APPROVED', ?)
-                        """,
-                        (match_id, lost["id"], found["id"], score, json.dumps(breakdown), now)
-                    )
+                    # A reviewed pair must not reappear after either report is edited.
+                    continue
+                match_id = str(uuid.uuid4())
+                cursor.execute(
+                    """
+                    INSERT INTO matches (id, lost_item_id, found_item_id, score, breakdown, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'PENDING', ?)
+                    """,
+                    (match_id, lost["id"], found["id"], score, json.dumps(breakdown), now)
+                )
 
-                chat_room_id = open_chat_for_confirmed_match(cursor, match_id, lost, found, now)
                 created_matches.append({
                     "id": match_id,
                     "lost_item_id": lost["id"],
                     "found_item_id": found["id"],
                     "score": score,
                     "breakdown": breakdown,
-                    "status": "APPROVED",
-                    "chat_room_id": chat_room_id
+                    "status": "PENDING"
                 })
 
     return created_matches
-
-def open_existing_high_confidence_matches() -> int:
-    """
-    Converts already-pending high-confidence matches into active chat rooms.
-    Useful for databases created before automatic chat opening was enabled.
-    """
-    opened_count = 0
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT
-                m.id as match_id,
-                l.*,
-                f.id as found_id,
-                f.type as found_type,
-                f.title as found_title,
-                f.category as found_category,
-                f.description as found_description,
-                f.location as found_location,
-                f.item_date as found_item_date,
-                f.image_url as found_image_url,
-                f.status as found_status,
-                f.reporter_id as found_reporter_id,
-                f.created_at as found_created_at
-            FROM matches m
-            JOIN items l ON m.lost_item_id = l.id
-            JOIN items f ON m.found_item_id = f.id
-            WHERE m.status = 'PENDING'
-              AND m.score >= ?
-              AND l.status = 'OPEN'
-              AND f.status = 'OPEN'
-            """,
-            (MATCH_CONFIDENCE_THRESHOLD,)
-        )
-        rows = cursor.fetchall()
-
-        for row in rows:
-            data = dict(row)
-            lost = {
-                "id": data["id"],
-                "type": data["type"],
-                "title": data["title"],
-                "category": data["category"],
-                "description": data["description"],
-                "location": data["location"],
-                "item_date": data["item_date"],
-                "image_url": data["image_url"],
-                "status": data["status"],
-                "reporter_id": data["reporter_id"],
-                "created_at": data["created_at"],
-            }
-            found = {
-                "id": data["found_id"],
-                "type": data["found_type"],
-                "title": data["found_title"],
-                "category": data["found_category"],
-                "description": data["found_description"],
-                "location": data["found_location"],
-                "item_date": data["found_item_date"],
-                "image_url": data["found_image_url"],
-                "status": data["found_status"],
-                "reporter_id": data["found_reporter_id"],
-                "created_at": data["found_created_at"],
-            }
-            open_chat_for_confirmed_match(cursor, data["match_id"], lost, found, now)
-            opened_count += 1
-
-    return opened_count

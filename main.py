@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import BASE_DIR, UPLOAD_DIR
 from database import init_db
 from seed_data import seed_initial_data
-from matching import open_existing_high_confidence_matches
 from routers.auth_routes import router as auth_router
 from routers.item_routes import router as item_router
 from routers.admin_routes import router as admin_router
@@ -18,11 +17,10 @@ from routers.complaint_routes import router as complaint_router
 # Initialize database schema & seed initial data
 init_db()
 seed_initial_data()
-open_existing_high_confidence_matches()
 
 app = FastAPI(
     title="Campus Lost & Found Platform",
-    description="Automated AI match scoring, fraud-proof item cataloging, admin verification queue, and in-app coordination.",
+    description="Automated match scoring, confidential found item reports, administrator review, and in-app coordination.",
     version="1.0.0"
 )
 
@@ -50,6 +48,10 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+@app.get("/api/health", tags=["Health"])
+def health():
+    return {"status": "ok"}
 
 @app.get("/", include_in_schema=False)
 async def serve_index():

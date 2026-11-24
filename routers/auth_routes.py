@@ -37,8 +37,8 @@ def register(req: UserRegister):
         pwd_hash = hash_password(req.password)
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         
-        # Determine role: if explicit ADMIN or contains admin@, allow for prototype testing, else USER
-        role = "ADMIN" if req.role == "ADMIN" or email.startswith("admin@") else "USER"
+        # Public registration never grants administrator privileges.
+        role = "USER"
         
         cursor.execute(
             """
